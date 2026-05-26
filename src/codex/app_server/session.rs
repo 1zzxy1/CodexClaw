@@ -29,8 +29,7 @@ use super::{
     events::{self as translator, TurnOutcome, TurnState},
     protocol::{
         ApprovalPolicy, ApprovalsReviewer, CollaborationMode, CollaborationSettings,
-        CompactedNotification, ItemNotification, ModeKind, ModelReroutedNotification,
-        PermissionProfileModificationParams, PermissionProfileSelectionParams, SandboxMode,
+        CompactedNotification, ItemNotification, ModeKind, ModelReroutedNotification, SandboxMode,
         SandboxPolicy, ThreadCompactStartParams, ThreadCompactStartResponse, ThreadResumeParams,
         ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, ThreadUnsubscribeParams,
         ThreadUnsubscribeResponse, ThreadUnsubscribeStatus, TokenUsageUpdatedNotification,
@@ -195,6 +194,7 @@ impl AppServerSession {
             approvals_reviewer: policy.approvals_reviewer.clone(),
             sandbox_policy: policy.sandbox_policy.clone(),
             permissions: None,
+            runtime_workspace_roots: build_runtime_workspace_roots(&request.add_dirs),
             model: request.model.clone(),
             effort,
             service_tier: service_tier_wire,
@@ -324,7 +324,8 @@ impl AppServerSession {
                     approval_policy: None,
                     approvals_reviewer: None,
                     sandbox: None,
-                    permissions: build_permissions(&request.add_dirs),
+                    permissions: None,
+                    runtime_workspace_roots: build_runtime_workspace_roots(&request.add_dirs),
                     service_tier: request.service_tier.map(service_tier_to_wire),
                     config: build_compact_config_overrides(request),
                 },
@@ -373,7 +374,8 @@ impl AppServerSession {
                         approval_policy: policy.approval_policy,
                         approvals_reviewer: policy.approvals_reviewer.clone(),
                         sandbox: thread_sandbox(policy, &request.add_dirs),
-                        permissions: build_permissions(&request.add_dirs),
+                        permissions: None,
+                        runtime_workspace_roots: build_runtime_workspace_roots(&request.add_dirs),
                         service_tier: request.service_tier.map(service_tier_to_wire),
                         config: build_config_overrides(request),
                     },
@@ -405,7 +407,8 @@ impl AppServerSession {
             approval_policy: policy.approval_policy,
             approvals_reviewer: policy.approvals_reviewer.clone(),
             sandbox: thread_sandbox(policy, &request.add_dirs),
-            permissions: build_permissions(&request.add_dirs),
+            permissions: None,
+            runtime_workspace_roots: build_runtime_workspace_roots(&request.add_dirs),
             service_tier: request.service_tier.map(service_tier_to_wire),
             config: build_config_overrides(request),
         };
@@ -511,23 +514,19 @@ fn build_turn_input(req: &ExecutionRequest) -> Vec<TurnInputItem> {
     items
 }
 
-fn build_permissions(add_dirs: &[PathBuf]) -> Option<PermissionProfileSelectionParams> {
+fn build_runtime_workspace_roots(add_dirs: &[PathBuf]) -> Option<Vec<String>> {
     if add_dirs.is_empty() {
         return None;
     }
     let mut seen = std::collections::BTreeSet::new();
-    let mut modifications = Vec::new();
+    let mut roots = Vec::new();
     for dir in add_dirs {
         let path = dir.to_string_lossy().into_owned();
         if seen.insert(path.clone()) {
-            modifications
-                .push(PermissionProfileModificationParams::AdditionalWritableRoot { path });
+            roots.push(path);
         }
     }
-    Some(PermissionProfileSelectionParams::Profile {
-        id: ":workspace".to_string(),
-        modifications,
-    })
+    Some(roots)
 }
 
 fn thread_sandbox(policy: &TurnPolicy, add_dirs: &[PathBuf]) -> Option<SandboxMode> {
@@ -1072,25 +1071,19 @@ mod tests {
     }
 
     #[test]
-    fn add_dirs_become_permission_profile_modifications() {
-        let permissions = build_permissions(&[
+    fn add_dirs_become_runtime_workspace_roots() {
+        let roots = build_runtime_workspace_roots(&[
             std::path::PathBuf::from("/tmp/inbox"),
             std::path::PathBuf::from("/tmp/workspace"),
             std::path::PathBuf::from("/tmp/inbox"),
         ])
-        .expect("permissions");
-        let v = serde_json::to_value(permissions).unwrap();
+        .expect("runtime roots");
 
-        assert_eq!(v["type"], "profile");
-        assert_eq!(v["id"], ":workspace");
-        assert_eq!(v["modifications"].as_array().unwrap().len(), 2);
-        assert_eq!(v["modifications"][0]["type"], "additionalWritableRoot");
-        assert_eq!(v["modifications"][0]["path"], "/tmp/inbox");
-        assert_eq!(v["modifications"][1]["path"], "/tmp/workspace");
+        assert_eq!(roots, vec!["/tmp/inbox", "/tmp/workspace"]);
     }
 
     #[test]
-    fn add_dirs_permissions_take_precedence_over_thread_sandbox() {
+    fn add_dirs_runtime_roots_take_precedence_over_thread_sandbox() {
         let policy = TurnPolicy::plan_mode();
 
         assert!(thread_sandbox(&policy, &[std::path::PathBuf::from("/tmp/inbox")]).is_none());

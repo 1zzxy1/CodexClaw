@@ -101,7 +101,9 @@ pub struct ThreadStartParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<PermissionProfileSelectionParams>,
+    pub permissions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_workspace_roots: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -135,7 +137,9 @@ pub struct ThreadResumeParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<PermissionProfileSelectionParams>,
+    pub permissions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_workspace_roots: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -192,7 +196,9 @@ pub struct TurnStartParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<SandboxPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<PermissionProfileSelectionParams>,
+    pub permissions: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_workspace_roots: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,22 +284,6 @@ pub enum SandboxMode {
     ReadOnly,
     WorkspaceWrite,
     DangerFullAccess,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum PermissionProfileSelectionParams {
-    Profile {
-        id: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        modifications: Vec<PermissionProfileModificationParams>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum PermissionProfileModificationParams {
-    AdditionalWritableRoot { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -840,36 +830,25 @@ mod tests {
     }
 
     #[test]
-    fn thread_start_uses_v2_sandbox_and_permissions() {
+    fn thread_start_uses_v2_sandbox_and_runtime_roots() {
         let p = ThreadStartParams {
             sandbox: Some(SandboxMode::WorkspaceWrite),
-            permissions: Some(PermissionProfileSelectionParams::Profile {
-                id: ":workspace".into(),
-                modifications: vec![
-                    PermissionProfileModificationParams::AdditionalWritableRoot {
-                        path: "/tmp/inbox".into(),
-                    },
-                ],
-            }),
+            permissions: Some(":workspace".into()),
+            runtime_workspace_roots: Some(vec!["/tmp/inbox".into()]),
             approvals_reviewer: Some(ApprovalsReviewer::AutoReview),
             ..ThreadStartParams::default()
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["sandbox"], "workspace-write");
-        assert_eq!(v["permissions"]["type"], "profile");
-        assert_eq!(v["permissions"]["id"], ":workspace");
-        assert_eq!(
-            v["permissions"]["modifications"][0]["type"],
-            "additionalWritableRoot"
-        );
-        assert_eq!(v["permissions"]["modifications"][0]["path"], "/tmp/inbox");
+        assert_eq!(v["permissions"], ":workspace");
+        assert_eq!(v["runtimeWorkspaceRoots"][0], "/tmp/inbox");
         assert_eq!(v["approvalsReviewer"], "auto_review");
         assert!(v.get("sandboxPolicy").is_none());
         assert!(v.get("addDirs").is_none());
     }
 
     #[test]
-    fn thread_resume_uses_v2_sandbox_and_permissions() {
+    fn thread_resume_uses_v2_sandbox_and_runtime_roots() {
         let p = ThreadResumeParams {
             thread_id: "thread-1".into(),
             model: None,
@@ -877,20 +856,15 @@ mod tests {
             approval_policy: None,
             approvals_reviewer: None,
             sandbox: Some(SandboxMode::ReadOnly),
-            permissions: Some(PermissionProfileSelectionParams::Profile {
-                id: ":workspace".into(),
-                modifications: vec![
-                    PermissionProfileModificationParams::AdditionalWritableRoot {
-                        path: "/tmp/inbox".into(),
-                    },
-                ],
-            }),
+            permissions: Some(":workspace".into()),
+            runtime_workspace_roots: Some(vec!["/tmp/inbox".into()]),
             service_tier: None,
             config: HashMap::new(),
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["sandbox"], "read-only");
-        assert_eq!(v["permissions"]["modifications"][0]["path"], "/tmp/inbox");
+        assert_eq!(v["permissions"], ":workspace");
+        assert_eq!(v["runtimeWorkspaceRoots"][0], "/tmp/inbox");
         assert!(v.get("sandboxPolicy").is_none());
         assert!(v.get("addDirs").is_none());
     }
@@ -924,6 +898,7 @@ mod tests {
             approvals_reviewer: None,
             sandbox_policy: None,
             permissions: None,
+            runtime_workspace_roots: None,
             model: None,
             effort: None,
             service_tier: Some(Some("fast".into())),
