@@ -100,6 +100,57 @@ CodexClaw 按以下顺序查找配置文件，使用第一个找到的文件：
 
 ---
 
+## `[codex_provider]` — 自定义 Codex 模型后端（xAI Grok 等）
+
+CodexClaw 仍通过 **Codex App-Server** 跑 agent（工具、审批、沙箱不变），但可以把隔离的 `CODEX_HOME`（`general.codex_home_global`）里的 Codex `config.toml` 写成自定义 `model_providers`，从而走 **xAI Grok OpenAI 兼容 API**，而不是只能用默认 OpenAI/Codex 账号。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | bool | `false` | 是否在启动时把该 provider 写入隔离 Codex 的 `config.toml` |
+| `id` | String | `"xai"` | `model_provider` 标识，对应 `[model_providers.<id>]` |
+| `name` | String | `"xAI Grok"` | 展示名称 |
+| `base_url` | String | `"https://api.x.ai/v1"` | OpenAI 兼容 API 根路径 |
+| `env_key` | String | `"XAI_API_KEY"` | Codex 从此环境变量读取 API Key |
+| `wire_api` | String | `"responses"` | Codex 线协议；xAI 支持 `/v1/responses`，与当前 Codex 要求一致 |
+| `set_as_default` | bool | `true` | 是否写入顶层 `model_provider`（及可选 `model`） |
+| `default_model` | String? | `"grok-4"` | 启用且 `set_as_default` 时写入的顶层 `model` |
+| `models` | String[] | Grok 常用 id 列表 | 额外模型 id（与 `config/codex_models.toml` 中的 Grok 条目一起出现在 `/model`） |
+
+### 启用 xAI Grok 的步骤
+
+1. 在 [xAI Console](https://console.x.ai/) 创建 API Key。
+2. 导出环境变量（进程需能读到）：
+
+```bash
+export XAI_API_KEY="xai-..."
+```
+
+3. 在 `codexclaw.toml` 中启用：
+
+```toml
+[codex_provider]
+enabled = true
+# 以下为默认值，可省略；需要时可覆盖 base_url / model
+# id = "xai"
+# base_url = "https://api.x.ai/v1"
+# env_key = "XAI_API_KEY"
+# wire_api = "responses"
+# default_model = "grok-4"
+```
+
+4. 可选：把会话默认模型也改成 Grok：
+
+```toml
+[general]
+default_model = "grok-4"
+```
+
+5. 重启 CodexClaw。启动日志中会出现 `applied codex_provider into isolated Codex home config.toml`。之后可用 `/model grok-4` 或 `/model grok-3-mini` 等切换。
+
+> **说明**：`enabled = false`（默认）时行为与改前完全一致，仍走系统/隔离 home 里已有的 OpenAI/Codex 配置。Grok 模型名会出现在内置目录中，但未启用 provider 时后端仍是 OpenAI，选 Grok 会在 Codex 侧失败。
+
+---
+
 ## 完整配置示例
 
 以下是一份包含所有字段的完整配置文件，可作为起始模板使用。
@@ -154,4 +205,17 @@ max_attempts             = 3
 retry_backoff_secs       = 30
 circuit_breaker_threshold = 5            # 连续失败 5 次后自动停用
 runs_retention           = 30
+
+# --- 可选：xAI Grok / 自定义 OpenAI 兼容后端 ----------------------
+# 默认关闭。启用后会把隔离 CODEX_HOME 的 config.toml 写成 Grok provider。
+# [codex_provider]
+# enabled       = true
+# id            = "xai"
+# name          = "xAI Grok"
+# base_url      = "https://api.x.ai/v1"
+# env_key       = "XAI_API_KEY"
+# wire_api      = "responses"
+# set_as_default = true
+# default_model = "grok-4"
+# models        = ["grok-4", "grok-4.5", "grok-3", "grok-3-mini"]
 ```

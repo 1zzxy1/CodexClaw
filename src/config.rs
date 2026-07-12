@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::session::state::ReasoningEffort;
+use crate::{
+    codex::provider_config::{CodexProviderSpec, default_grok_model_ids},
+    session::state::ReasoningEffort,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -14,6 +17,10 @@ pub struct AppConfig {
     pub shadow: ShadowSection,
     #[serde(default)]
     pub scheduler: SchedulerConfig,
+    /// Optional non-OpenAI Codex backend (e.g. xAI Grok via OpenAI-compatible API).
+    /// When disabled (default), the existing OpenAI/Codex auth path is unchanged.
+    #[serde(default)]
+    pub codex_provider: CodexProviderConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +174,101 @@ pub struct QqConfig {
     pub token_url: String,
 }
 
+/// Optional rewrite of the isolated Codex home `config.toml` so App-Server
+/// can use xAI Grok (or another OpenAI-compatible provider) instead of only
+/// the default OpenAI/Codex provider.
+///
+/// Defaults target xAI (`https://api.x.ai/v1`, `XAI_API_KEY`, `wire_api = "responses"`).
+/// Enable with `enabled = true` after exporting `XAI_API_KEY`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexProviderConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_codex_provider_id")]
+    pub id: String,
+    #[serde(default = "default_codex_provider_name")]
+    pub name: String,
+    #[serde(default = "default_codex_provider_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_codex_provider_env_key")]
+    pub env_key: String,
+    #[serde(default = "default_codex_provider_wire_api")]
+    pub wire_api: String,
+    /// When true, write top-level `model_provider` (and optional `model`).
+    #[serde(default = "default_codex_provider_set_as_default")]
+    pub set_as_default: bool,
+    /// Top-level `model` written into Codex config when `set_as_default` is true.
+    #[serde(default = "default_codex_provider_default_model")]
+    pub default_model: Option<String>,
+    /// Extra model ids merged into the `/model` picker when this provider is enabled.
+    #[serde(default = "default_codex_provider_models")]
+    pub models: Vec<String>,
+}
+
+impl Default for CodexProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            id: default_codex_provider_id(),
+            name: default_codex_provider_name(),
+            base_url: default_codex_provider_base_url(),
+            env_key: default_codex_provider_env_key(),
+            wire_api: default_codex_provider_wire_api(),
+            set_as_default: default_codex_provider_set_as_default(),
+            default_model: default_codex_provider_default_model(),
+            models: default_codex_provider_models(),
+        }
+    }
+}
+
+impl CodexProviderConfig {
+    pub fn to_spec(&self) -> CodexProviderSpec {
+        CodexProviderSpec {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            base_url: self.base_url.clone(),
+            env_key: self.env_key.clone(),
+            wire_api: self.wire_api.clone(),
+            set_as_default: self.set_as_default,
+            default_model: self.default_model.clone(),
+            models: self.models.clone(),
+        }
+    }
+
+    pub fn enabled_spec(&self) -> Option<CodexProviderSpec> {
+        if self.enabled {
+            Some(self.to_spec())
+        } else {
+            None
+        }
+    }
+}
+
+fn default_codex_provider_id() -> String {
+    "xai".to_string()
+}
+fn default_codex_provider_name() -> String {
+    "xAI Grok".to_string()
+}
+fn default_codex_provider_base_url() -> String {
+    "https://api.x.ai/v1".to_string()
+}
+fn default_codex_provider_env_key() -> String {
+    "XAI_API_KEY".to_string()
+}
+fn default_codex_provider_wire_api() -> String {
+    "responses".to_string()
+}
+fn default_codex_provider_set_as_default() -> bool {
+    true
+}
+fn default_codex_provider_default_model() -> Option<String> {
+    Some("grok-4".to_string())
+}
+fn default_codex_provider_models() -> Vec<String> {
+    default_grok_model_ids()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -179,6 +281,7 @@ impl Default for AppConfig {
             },
             shadow: ShadowSection::default(),
             scheduler: SchedulerConfig::default(),
+            codex_provider: CodexProviderConfig::default(),
         }
     }
 }
@@ -236,7 +339,84 @@ impl AppConfig {
             !self.general.self_build_command.trim().is_empty(),
             "general.self_build_command must not be empty"
         );
+        if self.codex_provider.enabled {
+            anyhow::ensure!(
+                !self.codex_provider.id.trim().is_empty(),
+                "codex_provider.id must not be empty when codex_provider.enabled is true"
+            );
+            anyhow::ensure!(
+                !self.codex_provider.base_url.trim().is_empty(),
+                "codex_provider.base_url must not be empty when codex_provider.enabled is true"
+            );
+            anyhow::ensure!(
+                !self.codex_provider.env_key.trim().is_empty(),
+                "codex_provider.env_key must not be empty when codex_provider.enabled is true"
+            );
+            anyhow::ensure!(
+                !self.codex_provider.wire_api.trim().is_empty(),
+                "codex_provider.wire_api must not be empty when codex_provider.enabled is true"
+            );
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn load_parses_codex_provider_grok_block() {
+        let tmp = NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[qq]
+app_id = "app"
+app_secret = "secret"
+
+[codex_provider]
+enabled = true
+id = "xai"
+base_url = "https://api.x.ai/v1"
+env_key = "XAI_API_KEY"
+wire_api = "responses"
+default_model = "grok-4"
+models = ["grok-4", "grok-3-mini"]
+"#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_path(tmp.path()).unwrap();
+        assert!(config.codex_provider.enabled);
+        assert_eq!(config.codex_provider.id, "xai");
+        assert_eq!(config.codex_provider.base_url, "https://api.x.ai/v1");
+        assert_eq!(config.codex_provider.env_key, "XAI_API_KEY");
+        let spec = config.codex_provider.enabled_spec().unwrap();
+        assert_eq!(spec.default_model.as_deref(), Some("grok-4"));
+        assert!(spec.models.iter().any(|m| m == "grok-3-mini"));
+    }
+
+    #[test]
+    fn load_without_codex_provider_keeps_openai_defaults() {
+        let tmp = NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[qq]
+app_id = "app"
+app_secret = "secret"
+"#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from_path(tmp.path()).unwrap();
+        assert!(!config.codex_provider.enabled);
+        assert!(config.codex_provider.enabled_spec().is_none());
+        // Defaults remain xAI-shaped but inactive until enabled.
+        assert_eq!(config.codex_provider.base_url, "https://api.x.ai/v1");
+        assert_eq!(config.general.default_model, "gpt-5.4");
     }
 }
 

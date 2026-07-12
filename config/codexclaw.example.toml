@@ -37,3 +37,17 @@ max_attempts = 3
 retry_backoff_secs = 30
 circuit_breaker_threshold = 5
 runs_retention = 30
+
+# Optional: use xAI Grok (or another OpenAI-compatible API) as the Codex backend.
+# When disabled (default), Codex keeps the normal OpenAI / ChatGPT auth path.
+# Requires: export XAI_API_KEY=...  and a Codex CLI that supports custom model_providers.
+# [codex_provider]
+# enabled = true
+# id = "xai"
+# name = "xAI Grok"
+# base_url = "https://api.x.ai/v1"
+# env_key = "XAI_API_KEY"
+# wire_api = "responses"
+# set_as_default = true
+# default_model = "grok-4"
+# models = ["grok-4", "grok-4.5", "grok-3", "grok-3-mini"]
