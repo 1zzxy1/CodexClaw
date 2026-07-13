@@ -605,7 +605,7 @@ model = "gpt-5.4"   # already canonical, must dedupe
             "model = \"gpt-5.4\"\n",
             &crate::codex::provider_config::CodexProviderSpec::xai_grok(),
         )
-        .unwrap();
+        .expect("apply grok provider");
         std::fs::write(tmp.path(), &applied).unwrap();
 
         let profile = read_codex_runtime_profile_from_path(tmp.path());

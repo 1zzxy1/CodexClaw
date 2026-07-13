@@ -17,10 +17,15 @@ pub struct AppConfig {
     pub shadow: ShadowSection,
     #[serde(default)]
     pub scheduler: SchedulerConfig,
-    /// Optional non-OpenAI Codex backend (e.g. xAI Grok via OpenAI-compatible API).
-    /// When disabled (default), the existing OpenAI/Codex auth path is unchanged.
+    /// Alternate backend for Grok / xAI-style OpenAI-compatible APIs.
+    /// Used at bootstrap when `enabled`, and by `/switch_model` when toggling to Grok.
     #[serde(default)]
     pub codex_provider: CodexProviderConfig,
+    /// Preferred backend when `/switch_model` selects Codex (usually a third-party
+    /// OpenAI-compatible mirror, NOT api.openai.com). When unset, switch tries to
+    /// re-activate a non-Grok provider already present in isolated config.toml.
+    #[serde(default)]
+    pub openai_provider: OpenAiProviderConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +237,8 @@ impl CodexProviderConfig {
             set_as_default: self.set_as_default,
             default_model: self.default_model.clone(),
             models: self.models.clone(),
+            requires_openai_auth: None,
+            preferred_auth_method: None,
         }
     }
 
@@ -242,6 +249,93 @@ impl CodexProviderConfig {
             None
         }
     }
+}
+
+/// Third-party (or official) OpenAI-compatible provider used for the **Codex** side
+/// of `/switch_model`. Typical example: a relay with `base_url` like
+/// `https://chat.soruxgpt.com/codex` and `env_key = "OPENAI_API_KEY"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiProviderConfig {
+    /// When true (and base_url/id set), `/switch_model` → Codex applies this provider
+    /// instead of clearing `model_provider` (which would hit official api.openai.com).
+    #[serde(default = "default_openai_provider_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_openai_provider_id")]
+    pub id: String,
+    #[serde(default = "default_openai_provider_name")]
+    pub name: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default = "default_openai_provider_env_key")]
+    pub env_key: String,
+    #[serde(default = "default_openai_provider_wire_api")]
+    pub wire_api: String,
+    #[serde(default = "default_openai_provider_default_model")]
+    pub default_model: Option<String>,
+    #[serde(default)]
+    pub requires_openai_auth: Option<bool>,
+    #[serde(default)]
+    pub preferred_auth_method: Option<String>,
+}
+
+impl Default for OpenAiProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_openai_provider_enabled(),
+            id: default_openai_provider_id(),
+            name: default_openai_provider_name(),
+            base_url: String::new(),
+            env_key: default_openai_provider_env_key(),
+            wire_api: default_openai_provider_wire_api(),
+            default_model: default_openai_provider_default_model(),
+            requires_openai_auth: None,
+            preferred_auth_method: None,
+        }
+    }
+}
+
+impl OpenAiProviderConfig {
+    pub fn to_spec(&self) -> Option<CodexProviderSpec> {
+        if !self.enabled || self.base_url.trim().is_empty() || self.id.trim().is_empty() {
+            return None;
+        }
+        Some(CodexProviderSpec {
+            id: self.id.clone(),
+            name: if self.name.trim().is_empty() {
+                self.id.clone()
+            } else {
+                self.name.clone()
+            },
+            base_url: self.base_url.clone(),
+            env_key: self.env_key.clone(),
+            wire_api: self.wire_api.clone(),
+            set_as_default: true,
+            default_model: self.default_model.clone(),
+            models: Vec::new(),
+            requires_openai_auth: self.requires_openai_auth,
+            preferred_auth_method: self.preferred_auth_method.clone(),
+        })
+    }
+}
+
+fn default_openai_provider_enabled() -> bool {
+    // Enabled by default only when base_url is later filled; empty base_url → to_spec() is None.
+    true
+}
+fn default_openai_provider_id() -> String {
+    "mirror".to_string()
+}
+fn default_openai_provider_name() -> String {
+    "mirror".to_string()
+}
+fn default_openai_provider_env_key() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+fn default_openai_provider_wire_api() -> String {
+    "responses".to_string()
+}
+fn default_openai_provider_default_model() -> Option<String> {
+    Some("gpt-5.5".to_string())
 }
 
 fn default_codex_provider_id() -> String {
@@ -282,6 +376,7 @@ impl Default for AppConfig {
             shadow: ShadowSection::default(),
             scheduler: SchedulerConfig::default(),
             codex_provider: CodexProviderConfig::default(),
+            openai_provider: OpenAiProviderConfig::default(),
         }
     }
 }

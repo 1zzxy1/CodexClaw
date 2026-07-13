@@ -147,7 +147,38 @@ default_model = "grok-4"
 
 5. 重启 CodexClaw。启动日志中会出现 `applied codex_provider into isolated Codex home config.toml`。之后可用 `/model grok-4` 或 `/model grok-3-mini` 等切换。
 
-> **说明**：`enabled = false`（默认）时行为与改前完全一致，仍走系统/隔离 home 里已有的 OpenAI/Codex 配置。Grok 模型名会出现在内置目录中，但未启用 provider 时后端仍是 OpenAI，选 Grok 会在 Codex 侧失败。
+6. 运行时可发 `/切换模型`（或 `/switch_model`）在 **Codex** 与 **Grok** 后端之间一键切换；也可用 `/切换模型 status` 查看、`/切换模型 codex` / `/切换模型 grok` 强制指定。这只会改写隔离 `CODEX_HOME` 的 `config.toml`（`model_provider` + `model`），**不会**新开第二个 bot 进程。
+
+### `[openai_provider]` — `/switch_model` 切回 Codex 时用的后端
+
+多数自建环境的 “Codex” 并不是 `api.openai.com`，而是第三方兼容中转（例如 `https://chat.soruxgpt.com/codex` + `OPENAI_API_KEY`）。  
+请在这里写明该中转，否则 `/切换模型` → Codex 可能清掉 `model_provider` 后误打官方 OpenAI（第三方 key 会 401）。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `enabled` | bool | `true` | 是否在切到 Codex 时应用此 provider（仍需配置 `base_url`） |
+| `id` | String | `"mirror"` | `model_provider` 标识 |
+| `name` | String | `"mirror"` | 展示名 |
+| `base_url` | String | `""` | 中转 API 根；**为空则不会应用**，改尝试从现有 config 恢复非 Grok provider |
+| `env_key` | String | `"OPENAI_API_KEY"` | API Key 环境变量名 |
+| `wire_api` | String | `"responses"` | 线协议 |
+| `default_model` | String? | `"gpt-5.5"` | 切到 Codex 时写入的 `model` |
+| `requires_openai_auth` | bool? | — | 可选，写入 provider 表 |
+| `preferred_auth_method` | String? | — | 可选，如 `"apikey"` |
+
+```toml
+[openai_provider]
+enabled = true
+id = "mirror"
+base_url = "https://chat.soruxgpt.com/codex"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+default_model = "gpt-5.5"
+requires_openai_auth = false
+preferred_auth_method = "apikey"
+```
+
+> **说明**：`codex_provider.enabled = false`（默认）时启动行为与改前一致。Grok 模型名会出现在内置目录中，但未启用 Grok provider 时后端仍是原路径。
 
 ---
 
